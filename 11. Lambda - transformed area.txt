@@ -1,0 +1,12 @@
+This will start Glue crawler on transformed layer, make audit entries in DynamoDB table and start glue job that will load transformed data into Redshift.
+Ensure the role associated with this lambda has required access to DynamoDB and Glue.
+
+Refer Code\Lambda\orders-transformed-data-lambda-function.txt for the code.
+
+Note the usage of batch writing into dynamodb.
+Batch writing helps to:
+a) Achieve higher throughput and lower latencies by writing, deleting, or replacing multiple items in a single request
+b) Take advantage of parallelism without having to manage multiple threads on your own
+
+Also, note the usage of pagination when using the s3 boto3 client.
+Without the usage of pagination, only 1000 records will be processed when using list_objects_v2.

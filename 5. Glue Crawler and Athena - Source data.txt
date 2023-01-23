@@ -1,0 +1,5 @@
+Create a Glue crawler on the S3 landing area - s3://vinod-ecommerce-data-from-rds/dev/orders/
+Provide the Glue Catalog database name where the Glue Catalog table needs to be created.
+Attach an IAM role to the Glue Crawler that has access to the required S3 bucket as well as the GlueServiceRole.
+
+Once the Glue Crawler has completed successfully and Glue catalog table is created, query the table in Athena and perform some basic validations like count check.

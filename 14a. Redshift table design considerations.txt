@@ -1,0 +1,140 @@
+======================================================= compression ===============================================================
+
+------------ Compression is a column level operation that reduces the size of data when it is stored.
+Compression conserves storage space and also reduces the size of data that is read from storage.
+This reduces the amount of disk I/O and therefore improves query performance.
+
+------------ Amazon Redshift automatically assigns an initial compression encoding to columns for which you don't specify compression encoding as follows:
+
+All columns in temporary tables are assigned RAW compression by default.
+Columns that are defined as sort keys are assigned RAW compression.
+Columns that are defined as BOOLEAN, REAL, DOUBLE PRECISION, GEOMETRY or GEOGRAPHY data type are assigned RAW compression.
+Columns that are defined as SMALLINT, INTEGER, BIGINT, DECIMAL, DATE, TIME, TIMETZ, TIMESTAMP, or TIMESTAMPTZ are assigned AZ64 compression.
+Columns that are defined as CHAR, VARCHAR, or VARBYTE are assigned LZO compression.
+
+If you don't want a column to be compressed, explicitly specify RAW encoding.
+
+------------ Here is an example with explicit encoding type for the various columns:
+
+create table customer (
+custkey int encode delta,
+custname varchar(30) encode raw,
+gender varchar(7) encode text255,
+address varchar(200) encode text255,
+city varchar(30) encode text255,
+state char(2) encode raw,
+zipcode char(5) encode bytedict,
+start_date date encode delta32k
+);
+
+-------------- encode auto
+
+ENCODE AUTO enables Amazon Redshift to automatically adjust the encoding type for all columns in the table to optimize query performance. 
+ENCODE AUTO preserves the initial encode types that you specify in creating the table. 
+Then, if Amazon Redshift determines that a new encoding type can improve query performance, Amazon Redshift can change the encoding type of the table columns. 
+ENCODE AUTO is the default if you don't specify an encoding type on any column in the table.
+
+create table t2 (
+c0 int, 
+c1 varchar
+) encode auto;
+
+The following example creates the table t3 with automatic compression encoding by specifying ENCODE AUTO. 
+Column c0 is defined with an initial encoding type of DELTA. 
+Amazon Redshift can change the encoding if another encoding provides better query performance.
+
+create table t3 (
+c0 int encode delta, 
+c1 varchar) 
+encode auto;
+
+The following example creates the table t4 with automatic compression encoding by specifying ENCODE AUTO. 
+Column c0 is defined with an initial encoding of DELTA, and column c1 is defined with an initial encoding of LZO. 
+Amazon Redshift can change these encodings if other encodings provide better query performance.
+
+create table t4 (
+c0 int encode delta, 
+c1 varchar encode lzo
+) encode auto;
+
+========================== dist key ==============================
+
+The primary goal of distribution is to:
+1. distribute the workload uniformly among the nodes in a cluster. uneven distribution forces some nodes to do more work than others and this impacts query performance.
+2. minimize data movement during query execution. if rows that participate in joins or aggregates are already collocated on the nodes with their joining rows in other tables, the optimizer does not need to distribute as much data during query execution.
+
+If we simply choose even distribution to distribute the data evenly, query processing can be degraded, especially if the table is joined to other tables. 
+The lack of distribution on a joining column often influences the type of join operation that can be performed efficiently. 
+Joins, aggregations, and grouping operations are optimized when both tables are distributed and sorted on their respective joining columns.
+
+From the columns used in your queries, choose a column that causes the least amount of skew as the DISTKEY. 
+A column which has many distinct values, such as timestamp or a running sequence number, would be a good first choice. 
+Avoid columns with few distinct values, such as credit card types, or days of week.
+
+=========================== sort key ============================
+
+A common case is a table that you typically query for specific date ranges. Say a large number of queries against it are interested in just this week’s (or this month’s / this year’s) revenue numbers. In those cases, the field with the date is a great candidate for a sort key. With this sort key in place, the database will know which blocks of data to process to get your result and not have to scan the entire table for the entries.
+
+Another good candidate for a sort key is a field that is frequently joined on. 
+If you make this field your sort key and distribution key, you will be greatly optimizing queries that have that join.
+
+If you have a table where there is a pattern of more than one field that is typically filtered on, you should select a compound sort key with those fields. 
+Returning to our revenue table example - say your organization is divided into geographical regions and most of your queries filter on the date and the region. 
+You would then select date and region as your compound sort keys. Note that the order of your sort keys matters. 
+If you select date then region, a query that only filters on region won’t see any benefit to the compound sort key because it isn’t first.
+
+If, however, there is no clear pattern for the fields that are filtered on, but there are several that are used in different cases, consider an interleaved sortkey. 
+These keys give an equal weight to all the fields in the sort key. 
+So while a query against just the date won’t be as fast as the compound sort key with date and region, a query filtering only on the region will perform much better. 
+One thing to note when using interleaved sort keys, however, is that they are costlier to maintain - loading and vacuuming these tables will be much slower.
+
+----------------   syntax examples 
+
+create table sales (
+salesid integer not null,
+listid integer not null,
+sellerid integer not null,
+buyerid integer not null,
+eventid integer not null encode mostly16,
+dateid smallint not null,
+qtysold smallint not null encode mostly8,
+pricepaid decimal(8,2) encode delta32k,
+commission decimal(8,2) encode delta32k,
+saletime timestamp,
+primary key(salesid),
+foreign key(listid) references listing(listid),
+foreign key(sellerid) references users(userid),
+foreign key(buyerid) references users(userid),
+foreign key(dateid) references date(dateid))
+distkey (listid)
+compound sortkey (listid,sellerid);
+                                    
+create table customer_interleaved (
+  c_custkey     	integer        not null,
+  c_name        	varchar(25)    not null,
+  c_address     	varchar(25)    not null,
+  c_city        	varchar(10)    not null,
+  c_nation      	varchar(15)    not null,
+  c_region      	varchar(12)    not null,
+  c_phone       	varchar(15)    not null,
+  c_mktsegment      varchar(10)    not null)
+diststyle all
+interleaved sortkey (c_custkey, c_city, c_mktsegment);  
+
+
+==================================== auto =====================================
+
+Automatic table optimization is a self-tuning capability that automatically optimizes the design of tables by applying sort and distribution keys without the need for administrator intervention. By using automation to tune the design of tables, you can get started more easily and get the fastest performance quickly without needing to invest time to manually tune and implement table optimizations.
+
+Automatic table optimization continuously observes how queries interact with tables. It uses advanced artificial intelligence methods to choose sort and distribution keys to optimize performance for the cluster's workload. If Amazon Redshift determines that applying a key improves cluster performance, tables are automatically altered within hours from the time the cluster was created, with minimal impact to queries.
+
+To take advantage of this automation, an Amazon Redshift administrator creates a new table, or alters an existing table to enable it to use automatic optimization. Existing tables with a distribution style or sort key of AUTO are already enabled for automation. When you run queries against those tables, Amazon Redshift determines if a sort key or distribution key will improve performance. If so, then Amazon Redshift automatically modifies the table without requiring administrator intervention. If a minimum number of queries are run, optimizations are applied within hours of the cluster being launched.
+
+If Amazon Redshift determines that a distribution key improves the performance of queries, tables where distribution style is AUTO can have their distribution style changed to KEY.
+
+By default, tables created without explicitly defining sort keys or distributions keys are set to AUTO. At the time of table creation, you can also explicitly set a sort or a distribution key manually. If you set the sort or distribution key, then the table is not automatically managed.
+
+To enable an existing table to be automatically optimized, use the ALTER statement options to change the table to AUTO. You might choose to define automation for sort keys, but not for distribution keys (and vice versa). If you run an ALTER statement to convert a table to be an automated table, existing sort keys and distribution styles are preserved.
+
+ALTER TABLE table_name ALTER SORTKEY AUTO;
+ALTER TABLE table_name ALTER DISTSTYLE AUTO;

@@ -1,0 +1,29 @@
+Below queries help us to understand the compression / distribution techniques applied on a table.
+Before being able to run these queries, we need to changee the 'search_path' parameter of the cluster.
+This is a parameter in the parameter group associated with the cluster. We cannot change the default parameter group.
+So create a new parameter group and add the new schemas in this search path. 
+I created a new parameter group called ecommerce-parameter-group and changed the search_path from "$user, public" to "$user, public, ecommerce_staging, ecommerce".
+Then i modified the cluster to point to this parameter group instead of the default parameter group and rebooted teh cluster.
+
+Now, below queries will return results
+
+select schemaname, tablename, "column", type, encoding
+from pg_table_def
+where tablename = 'orders'
+and schemaname = 'ecommerce'
+
+select schemaname, tablename, "column", type, encoding
+from pg_table_def
+where tablename = 'orders'
+and schemaname = 'ecommerce_staging'
+
+select reloid as tableid, trim(nspname) as schemaname, trim(relname) as tablename, reldiststyle, releffectivediststyle, 
+CASE WHEN "reldiststyle" = 0 THEN 'EVEN'::text 
+     WHEN "reldiststyle" = 1 THEN 'KEY'::text 
+     WHEN "reldiststyle" = 8 THEN 'ALL'::text 
+     WHEN "releffectivediststyle" = 10 THEN 'AUTO(ALL)'::text 
+     WHEN "releffectivediststyle" = 11 THEN 'AUTO(EVEN)'::text 
+     WHEN "releffectivediststyle" = 12 THEN 'AUTO(KEY)'::text ELSE '<<UNKNOWN>>'::text END as diststyle,relcreationtime 
+from pg_class_info a left join pg_namespace b 
+on a.relnamespace = b.oid
+where a.relname like '%orders%'

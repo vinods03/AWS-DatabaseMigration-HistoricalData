@@ -1,0 +1,61 @@
+create schema ecommerce_staging;
+
+create schema ecommerce;
+
+********************************************* Transactional data ********************************************* 
+
+---- Staging Table
+
+create TABLE ecommerce_staging.orders (
+order_id VARCHAR(50) , 
+customer_id VARCHAR(100) , 
+order_status VARCHAR(35) ,
+order_estimated_delivery_date VARCHAR(100), 
+order_delivered_customer_date VARCHAR(100)
+);
+
+Note: If the number of columns in Redshift is not the same as number of columns in S3, the load into Redshift from S3 (in the Glue job) will fail.
+Also, i was getting incompatiable schema issue when using TIMESTAMP datatype for the 2 date columns - changed these to VARCHAR.
+
+---- Final Table
+
+create TABLE ecommerce.orders (
+order_id VARCHAR(50) , 
+order_status VARCHAR(35) ,
+order_estimated_delivery_date VARCHAR(100), 
+order_delivered_customer_date VARCHAR(100),
+customer_id VARCHAR(100) , 
+customer_city varchar(27) NOT NULL,
+customer_state varchar(2) NOT NULL,
+create_timestamp TIMESTAMP
+)
+distkey(order_id)
+interleaved sortkey(order_id,customer_id,order_delivered_customer_date);
+-- (this is commented out) compound sortkey(order_id,customer_id,order_delivered_customer_date);
+
+Note: Why have i chosen this distribution key and sortkey ?
+Refer 15a. Redshift table design.txt for detailed notes on distribution key and sort key.
+distkey -> Here, order_id will have many distinct values and also, i am expecting join with other tables on order_id column. 
+sortkey -> order_id again as it is expected to be used in joins, customer_id as i am expecting filter on customer_id and order_delivered_customer_date as there could be range filter queries on this column. I am using interleaved instead of compound, because i dont want performance to be degraded when the query is based solely on customer_id or the date field.
+One thing to note when using interleaved sort keys, however, is that they are costlier to maintain - loading and vacuuming these tables will be much slower.
+
+Also, note that automatic table optimization feature is available in redshift, where you dont have to specify dist key, sort key etc but redshift will do what is best.
+Refer 15a. Redshift table design.txt. I am using distkey and sortkey here just as a training exercise. Feel free to run below commands and change the diststyle / sortkey.
+
+ALTER TABLE ecommerce.orders ALTER SORTKEY AUTO;
+ALTER TABLE ecommerce.orders ALTER DISTSTYLE AUTO;
+
+********************************************* Reference data ********************************************* 
+
+CREATE TABLE ecommerce.customers (
+  customer_id varchar(32) NOT NULL,
+  customer_unique_id varchar(32) NOT NULL,
+  customer_zip_code_prefix decimal(10,0) NOT NULL,
+  customer_city varchar(27) NOT NULL,
+  customer_state varchar(2) NOT NULL
+);
+
+Note: No need to create this table separately.
+The DMS task can create the table.
+
+

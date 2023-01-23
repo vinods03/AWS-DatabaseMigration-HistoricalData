@@ -1,0 +1,24 @@
+There are 3 important timout / time-limits which we need to be aware of.
+If this is not set correctly, we could see multiple uncontrolled executions of state machine (that could end up creating multiple EMR clusters), glue crawler etc.
+
+Lambda Timeout:
+
+Lambda runs your code for a set amount of time before timing out. Timeout is the maximum amount of time in seconds that a Lambda function can run. 
+The default value for this setting is 3 seconds, but you can adjust this in increments of 1 second up to a maximum value of 15 minutes.
+If lambda has a lot of tasks to perform and it cannot complete within the timeout time, it will fail.
+The timeout is set to 3 minutes for the landing area lambda function that will start the glue crawler on landing area, state machine and make entries in dynamodb. 
+The timeout is set to 10 minutes for the transformed area lambda function that will start the glue crawler on transformed area, glue job that processes transformed data into redshift and make entries in dynamodb. 
+
+Since the number of files in the transformed layer, on which audit information needs to be written into dynamodb is expected to be much more than the number of files in landing layer, the timeout is 10 minutes for the transformed layer function. This lambda function took close to 8 minutes to complete all the tasks / make all entries in audit table. If number of files in landing layer is expected to increase, increase the timeout on the landing layer function also.
+
+SQS Trigger in Lambda - Batch window:
+
+The batch window in the SQS trigger of the lambda functions indicates the time for which lambda waits till starting to execute.
+We will use batching if we dont want the functions to execute after every message but only for once for multiple messages.
+I have set the batch size to 10000 and batch window to 5 minutes for the landing area SQS trigger.
+If 10000 messages come before 5 minutes, the lambda can start before 5 minutes, else lambda will wait for 5 minutes and then start execution.
+
+SQS Visibility Timeout:
+
+SQS Visibility Timeout is the time limit upto which, if the messages are not consumed by the consumer application (like lambda), they start appearing in the queue again.
+This should be atleast 3 + 5 = 8 minutes for us (landing layer)

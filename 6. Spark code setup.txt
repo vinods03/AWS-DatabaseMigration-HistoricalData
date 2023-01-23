@@ -1,0 +1,105 @@
+We transform the data in the landing area using Spark.
+Below sections indicate the setup / steps needed to develop and test the Spark code.
+
+******************************* EMR Cluster creation ************************************
+
+Create a EMR cluster, I used Release label emr-6.3.0 and selected the applications hadoop and spark.
+I selected 1 c3.xlarge master node and 2 c3.xlarge core node, no auto-scaling, no auto-termination, and termination protection disabled.
+I added the bootstrap script to install boto3 on all nodes of the cluster - Refer Code Snippets\boto3_install.sh
+
+******************************* IDE Setup ***********************************
+
+Install Visual Studio Code if you dont have it already.
+In Visual Studio Code, search for the extension "Remote Development" and install it.
+
+From Visual Studio Code, Terminal -> Open New Terminal and see if you are able to connect to the master node of the EMR cluster using the command:
+ssh -i C:\Users\Vinod\.ssh\MyNewAWSKeyPair.pem hadoop@ec2-100-26-247-157.compute-1.amazonaws.com
+See the section "Windows - convert a .ppk file to a .pem file" to find out how to convert a ppk file into a pem file
+Now you will be able to run aws sdk commands like aws s3 ls on the master node of the EMR cluster.
+
+Once this works, from Visual Studio Code, you do a Ctrl + Shift + P -> Connect to Host -> Configure SSH Hosts -> you will see couple of paths for the config file. 
+Choose the first one -> C:\Users\Vinod\.ssh
+Modify the config file as per the SSH command above
+Note that i have copied my pem file into the same path as the SSH config file C:\Users\Vinod\.ssh
+
+Again do a Ctrl + Shift + P -> Connect to Host -> the host configured above will show up now. 
+Click it and there might be a prompt to choose platform -> select Linux
+You should be able to see a green icon indicating the EMR cluster master node at the left bottom corner indicating that you have established connectivity from your local Visual Studio Code to the remote master node of the EMR cluster. 
+So basically you can now write your spark code on the master node of the EMR cluster (using Visual Studio Code) and execute it there itself.
+
+From the Visual Studio window that is connected to EMR cluster, open a new terminal.
+You will be in /home/hadoop directory
+Create a folder - mkdir ecommerce-emr-project
+Then from File -> Add this folder to Workspace
+From the Visual Studio explorer, you can go to this workspace and create new files, open existing files etc
+
+Windows - convert a .ppk file to a .pem file:
+
+Start PuTTYgen. For Actions, choose Load, and then navigate to your .ppk file.
+Choose the .ppk file, and then choose Open.
+(Optional) For Key passphrase, enter a passphrase. For Confirm passphrase, re-enter your passphrase.
+Note: Although a passphrase isn't required, you should specify one as a security measure to protect the private key from unauthorized use. 
+Using a passphrase makes automation difficult, because human intervention is needed to log in to an instance or to copy files to an instance.
+From the menu at the top of the PuTTY Key Generator, choose Conversions, Export OpenSSH Key.
+Note: If you didn't enter a passphrase, you receive a PuTTYgen warning. Choose Yes.
+Name the file and add the .pem extension.
+Choose Save.
+
+
+**************************************** Development of the spark code ***********************************************
+
+Start with a basic util.py that defines a function to create a spark session and an app.py that calls util.py and actually creates a spark session.
+Using the spark session, write a simple spark.sql(current_date()).show()
+
+Now, in the master node terminal:
+zip -r ecommerce-util.zip util.py
+
+If you have many .py files, you can zip them all together using
+zip -r ecommerce-util.zip *.py
+
+Note that app.py should not be part of the zip file.
+
+First run in client mode and see if the script is working as expected.
+The print statements and show() stataments will work in client mode as the display will happen on the master node terminal.
+spark-submit --deploy-mode client --py-files ecommerce-util.zip app.py
+
+Continue to run in client mode and build / test function by function.
+In client mode, environment variables are set using the export command on the master node:
+export appName=ecommerce-orders
+export src_file_format=csv
+export src_file_dir=s3://vinod-ecommerce-data-from-rds/dev/orders/
+export tgt_file_format=parquet
+export tgt_file_dir=s3://vinod-ecommerce-data-transformed/orders/
+export order_purchase_yr=2017
+
+Once the entire script has been developed and tested in client mode, switch to cluster mode:
+Here print and show() will not display on terminal but verify if the target folder has been written as expected.
+
+spark-submit --deploy-mode cluster \
+--conf "spark.yarn.appMasterEnv.appName=ecommerce-orders" \
+--conf "spark.yarn.appMasterEnv.src_file_format=csv" \
+--conf "spark.yarn.appMasterEnv.src_file_dir=s3://vinod-ecommerce-data-from-rds/dev/orders/" \
+--conf "spark.yarn.appMasterEnv.tgt_file_format=parquet" \
+--conf "spark.yarn.appMasterEnv.tgt_file_dir=s3://vinod-ecommerce-data-transformed/orders/" \
+--conf "spark.yarn.appMasterEnv.order_purchase_yr=2017" \
+--py-files ecommerce-util.zip \
+app.py
+
+Now, move the code to S3.
+Also changed the order_purchase_yr to 2000, so that we process all the data from RDS.
+2017 was used just to test if the filter was working as expected.
+Again, verify if the target folder has been written as expected.
+
+spark-submit --deploy-mode cluster \
+--conf "spark.yarn.appMasterEnv.appName=ecommerce-orders" \
+--conf "spark.yarn.appMasterEnv.src_file_format=csv" \
+--conf "spark.yarn.appMasterEnv.src_file_dir=s3://vinod-ecommerce-data-from-rds/dev/orders/" \
+--conf "spark.yarn.appMasterEnv.tgt_file_format=parquet" \
+--conf "spark.yarn.appMasterEnv.tgt_file_dir=s3://vinod-ecommerce-data-transformed/orders/" \
+--conf "spark.yarn.appMasterEnv.order_purchase_yr=2000" \
+--py-files s3://vinod-ecommerce-data-from-rds/code/ecommerce-util.zip \
+s3://vinod-ecommerce-data-from-rds/code/app.py
+
+Once the verification is done, the EMR cluster can be terminated.
+
+Refer Code\Spark code that runs on EMR, for the final code.

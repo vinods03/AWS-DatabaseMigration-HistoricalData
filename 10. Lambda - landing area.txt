@@ -1,0 +1,23 @@
+Now create a basic Python lambda function with the SQS queue created above, as the trigger.
+Make sure the role associated with the lambda function has access to read from SQS - else attach required IAM policy to the role.
+
+In the first step, we can just print(event) and also in the import we can include boto3 as boto3 is needed for any operation related to the aws services.
+Upload file in S3 bucket. Check in CloudWatch logs if lambda got triggered and what has been printed as part of print(event).
+Use json formatter to understand the structure of the event.
+Build the logic to retrieve the required attributes like s3 file name, file size etc from event / event['Records'].
+
+Once all required attributes are retrieved, insert into landing area dynamodb audit table.
+Make sure the role associated with the lambda function has access to write to dynamodb - else attach required IAM policy to the role.
+Note the usage of batch writing into dynamodb.
+Batch writing helps to:
+a) Achieve higher throughput and lower latencies by writing, deleting, or replacing multiple items in a single request
+b) Take advantage of parallelism without having to manage multiple threads on your own
+
+Trigger Glue Crawler on the landing area so that Athena will have the latest data for analysis.
+Make sure the role associated with the lambda function has required glue access.
+
+Trigger a Step function that will create EMR cluster, execute spark code on the cluster to transform the landing area files / load the transformed area and then terminate the cluster.
+The step function will also invoke a lambda function that will start the glue crawler on the transformed data, make entries in DynamoDB audit table to track the files processed into the transformed layer and start a Glue job that will load the transformed files into Redshift staging area.
+
+Refer Code\lambda -> orders-landing-area-lambda-function.txt for the final code.
+

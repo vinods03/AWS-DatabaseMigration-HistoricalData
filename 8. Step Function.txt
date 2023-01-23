@@ -1,0 +1,51 @@
+This will create EMR cluster, execute spark code as a step and then terminate the EMR cluster.
+
+The step function will also invoke a lambda function that will start the glue crawler on the transformed data, make entries in DynamoDB audit table to track the files processed into the transformed layer and start a Glue job that will load the transformed files into Redshift staging area.
+
+We are using the State machine instead of SQS queue notification to trigger the lambda on the transformed layer (unlike the landing area).
+Such an approach will help when you want to ensure lambda gets triggered only when all files have been moved into the S3 bucket and does not get triggered as soon as 1 file is delievered.
+Also SQS guarantees atlease once notification .. which means there could be duplicates when using the notification approach.
+
+
+*********************************************************************************************************************************************
+
+
+Pre-requisites:
+
+From the EMR console, go to the cluster that was used for processing the orders data in the previous section and copy the "AWS CLI Export" section.
+This is the command actually used to create the EMR cluster based on the configuration we had provided and this command will be useful for the StateMachine task that will be used to create the EMR cluster.
+
+aws emr create-cluster --auto-scaling-role EMR_AutoScaling_DefaultRole 
+--applications Name=Hadoop Name=Spark 
+--bootstrap-actions '[{"Path":"s3://vinod-emr-project/bootstrap/boto3_install.sh","Name":"Custom action"}]' 
+--ebs-root-volume-size 10 
+--ec2-attributes '{"KeyName":"MyNewAWSKeyPair","InstanceProfile":"EMR_EC2_DefaultRole","SubnetId":"subnet-02089c503f1724835",
+                   "EmrManagedSlaveSecurityGroup":"sg-0ea777ed434e66013","EmrManagedMasterSecurityGroup":"sg-0e2a7151fab3d3013"}' 
+--service-role EMR_DefaultRole 
+--release-label emr-6.3.0 
+--log-uri 's3n://aws-logs-100163808729-us-east-1/elasticmapreduce/' 
+--name 'ecommerce-emr-cluster' 
+--instance-groups '[{"InstanceCount":2,"InstanceGroupType":"CORE","InstanceType":"c3.xlarge","Name":"Core - 2"},                    
+                    {"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"c3.xlarge","Name":"Master - 1"}]' 
+--configurations '[{"Classification":"spark-hive-site","Properties":{"hive.metastore.client.factory.class":"com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory"}}]' 
+--scale-down-behavior TERMINATE_AT_TASK_COMPLETION 
+--region us-east-1
+
+
+Also, so far, we have tested the spark code by running the spark-submit command on the master node. 
+Now we need to add this spark-submit as a Step in the EMR cluster and test, before creating a State Machine.
+When creating / testing EMR cluster / Step function as an independent unit, follow below steps:
+
+Select Step Type as Spark application and deploy-mode as Cluster:
+
+In the spark-submit options, give this:
+
+--conf "spark.yarn.appMasterEnv.appName=ecommerce-orders" --conf "spark.yarn.appMasterEnv.src_file_format=csv" --conf "spark.yarn.appMasterEnv.src_file_dir=s3://vinod-ecommerce-data-from-rds/dev/orders/" --conf "spark.yarn.appMasterEnv.tgt_file_format=parquet" --conf "spark.yarn.appMasterEnv.tgt_file_dir=s3://vinod-ecommerce-data-transformed/orders/" --conf "spark.yarn.appMasterEnv.order_purchase_yr=2000" --py-files s3://vinod-ecommerce-data-from-rds/code/ecommerce-util.zip
+
+In application location, give s3://vinod-ecommerce-data-from-rds/code/app.py
+
+
+*********************************************************************************************************************************************
+
+
+Refer Code\Step Function\State Machine - Task Configuration details.txt for the configuration details.

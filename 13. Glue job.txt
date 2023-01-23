@@ -1,0 +1,38 @@
+I used the Python Shell Script Editor and uploaded my .py file.
+
+The role associated with the Glue job must have access to S3, Secrets Manager and Redshift.
+The GlueService role is also needed so that Cloudwatch logs are accessible for the job.
+
+The IAM role in the COPY command within the Glue job must be the same as the IAM role associated with the Redshift cluster.
+This role must have access to S3 because we need to be able to execute COPY commands on Redshift cluster.
+
+You need to create a "Connection" under AWs Glue Studio -> Connectors and associate that Connection with the job.
+Without this, i was getting the "Connection timed out" error when connecting to Redshift.
+
+When you create a Connection like this and associate your Glue job to this connection, the job begins to run in the particular VPC / subnet and hence S3 might become unreachable for the job. I was getting the error "VPC S3 endpoint validation failed for SubnetId". So i went to the VPC section of the AWS console and created an endpoint of type Gateway for S3 service in us-east-1 region in the VPC where the Redshift Connection was created. So the Glue job cano connect to S3 through this S3 endpoint.
+
+I also created an endpoint of type interface for SecretsManager.
+Without this, the job was running continuously without throwing any error.
+
+Now, the job was able to connect to Redshift, Secrets Manager as well as S3 and completed fine.
+
+So things to check when Glue job is failing:
+
+1. Make sure a "Redshift Connection" is created and associated with the job.
+2. See if the Security Group associated with the Redshift cluster allows Redshift Inbound Traffic on port 5439.
+3. Make sure a VPC endpoint is created for S3, Secrets Manager in the VPC of your Connection.
+4. Make sure the Glue job has the right IAM role with access to required Redshift cluster and S3 bucket.
+5. The IAM role in the COPY command within the Glue job must be the same as the IAM role associated with the Redshift cluster.
+
+Refer Code\Glue -> Glue script.txt for the final code.
+
+This Glue job loads the Redshift staging layer from S3 and then invokes a Redshift stored procedure to join the Staging data and Reference (customer) data to load the Redshift final layer with enriched data.
+
+Refer Code\Redshift\Redshift stored procedure.txt for the Redshift stored proc.
+
+
+
+
+
+
+

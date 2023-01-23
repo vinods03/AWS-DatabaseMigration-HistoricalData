@@ -1,0 +1,4 @@
+Create a dynamodb table (orders-audit-table), with file_name as the partition key. The file_name needs to be unique.
+Used the default capcity of 5 RCU and 5 WCU.
+
+This table is used to track all the files processed by our data pipeline.
