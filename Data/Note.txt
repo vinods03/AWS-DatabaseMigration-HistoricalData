@@ -1,0 +1,1 @@
+If you dont want to keep the DMS active for a long time, upload this file directly into the landing area for testing the pipeline.
