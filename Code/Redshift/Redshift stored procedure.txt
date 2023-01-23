@@ -1,0 +1,25 @@
+CREATE OR REPLACE PROCEDURE enriched_orders_sp ()
+AS $$
+BEGIN
+
+ RAISE INFO 'STARTING THE LOAD INTO ecommerce.orders';
+ 
+ INSERT INTO ecommerce.orders
+ select order_id, order_status, order_estimated_delivery_date, order_delivered_customer_date,
+ a.customer_id, customer_city, customer_state, getdate() as create_timestamp
+ from ecommerce_staging.orders a left outer join ecommerce.customers b
+ on a.customer_id = b.customer_id;
+ 
+ RAISE INFO 'COMPLETED THE LOAD INTO ecommerce.orders';
+
+EXCEPTION 
+ 
+ WHEN OTHERS THEN
+ RAISE EXCEPTION 'LOAD INTO ecommerce.orders failed';
+ 
+END;
+$$ LANGUAGE plpgsql;
+
+------------------------------------ How to invoke / test the above stored proc: -------------------------------------------
+
+call enriched_orders_sp();
