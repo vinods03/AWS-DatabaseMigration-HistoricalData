@@ -1,0 +1,68 @@
+import boto3, json, time
+
+dynamodb_resource = boto3.resource('dynamodb')
+audit_table = dynamodb_resource.Table('orders-audit-table')
+
+glue_client = boto3.client('glue')
+crawler_name = 'mysql-to-s3-orders-historical-crawler'
+
+sfn_client = boto3.client('stepfunctions')
+state_machine_arn = 'arn:aws:states:us-east-1:100163808729:stateMachine:ecommerce-orders-state-machine'
+curr_time = round(time.time()*1000)
+state_machine_name = 'ecommerce-state-machine' + '-' + str(curr_time)
+print('The state machine name is ', state_machine_name)
+
+def lambda_handler(event, context):
+    
+    # start glue crawler on the landing layer
+    
+    try:        
+        glue_client.start_crawler(Name = crawler_name)
+        print('Glue crawler ', crawler_name, ' started successfully')
+    except Exception as e:
+        print('Unable to start the glue crawler ', crawler_name, '. The exception is ', e)
+        
+    # start state machine
+        
+    try:
+        sfn_client.start_execution(stateMachineArn=state_machine_arn,name=state_machine_name)
+        print('State Machine ', state_machine_name, ' started successfully')
+    except Exception as f:
+        print('Unable to start the state machine ', state_machine_name, '. The exception is ', f)
+    
+    # dynamodb audit entries for files in landing layer
+     
+    items_to_add = []
+    
+    for i in event['Records']:
+        print('i is: ', i)
+        
+        s3_event = json.loads(i['body'])
+        print('s3_event is: ', s3_event)
+        
+        for j in s3_event['Records']:
+            print('j is: ', j)
+            
+            bucket_name = j['s3']['bucket']['name']
+            file_name = j['s3']['object']['key']
+            file_size = j['s3']['object']['size']
+            file_etag = j['s3']['object']['eTag']
+            
+            print('bucket_name: ', bucket_name)
+            print('file_name: ', file_name)
+            print('file_size: ', file_size)
+            print('file_etag: ', file_etag)
+            
+        item = {'file_name': file_name, 'file_etag': file_etag, 'file_size': file_size, 'pipeline_layer': 'landing_area'}
+        items_to_add.append(item)
+        
+    print('The final list is: ', items_to_add)
+     
+    try:       
+        with audit_table.batch_writer() as batch:
+            for item in items_to_add:
+                batch.put_item(Item = item)
+        print('Data loaded successfully in audit table for the landing layer')
+    except ClientError as e:
+        print('Unable to complete audit entries for the landing layer. The exception is ', e)
+        raise

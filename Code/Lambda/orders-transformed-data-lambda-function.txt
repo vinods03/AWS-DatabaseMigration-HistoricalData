@@ -1,0 +1,63 @@
+import json, boto3, time
+from botocore.exceptions import ClientError
+
+dynamodb_resource = boto3.resource('dynamodb')
+audit_table = dynamodb_resource.Table('orders-audit-table')
+
+glue_client = boto3.client('glue')
+crawler_name = 's3-orders-historical-transformed-crawler'
+
+s3_client = boto3.client('s3')
+bucket_name = 'vinod-ecommerce-data-transformed'
+
+
+def lambda_handler(event, context):
+    
+    # starting transformed layer glue crawler
+    
+    try:        
+        glue_client.start_crawler(Name = crawler_name)
+        print('Glue crawler ', crawler_name, ' started successfully')
+    except Exception as e:
+        print('Unable to start the glue crawler ', crawler_name, '. The exception is ', e)
+        
+    # start the glue job that will load transformed orders into redshift staging
+    
+    try:
+        glue_client.start_job_run(JobName = 'transformed_orders_to_redshift_staging')
+    except Exception as f:
+	    print('Unable to start glue job !! The exception is ', f)
+        
+    # dynamodb audit entries for files in transformed layer
+    # Note the usage of pagination when using 'list_objects_v2'. Without this only 1000 items from S3 will be processed
+    
+    paginator = s3_client.get_paginator('list_objects_v2')
+    pages = paginator.paginate(Bucket=bucket_name)
+    items_to_add = []
+    
+    for page in pages:
+        for file in page['Contents']:
+            file_name = file['Key']
+            file_size = file['Size']
+            file_etag = file['ETag']
+            
+            # print('file_name: ', file_name)
+            # print('file_size: ', file_size)
+            # print('file_etag: ', file_etag)
+        
+            item = {'file_name': file_name, 'file_etag': file_etag, 'file_size': file_size, 'pipeline_layer': 'transformed_area'}
+        
+            if file_name.find('parquet') != -1:
+                items_to_add.append(item)
+
+    print('The final list is: ', items_to_add)
+    print('The number of items to add is ', len(items_to_add))
+    
+    try:
+        with audit_table.batch_writer() as batch:
+            for item in items_to_add:
+                batch.put_item(Item = item)
+        print('Data loaded successfully in audit table for the transformed layer')
+    except ClientError as e:
+        print('Unable to complete audit entries for the transformed layer. The exception is ', e)
+        raise
