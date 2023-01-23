@@ -1,0 +1,142 @@
+Here, we will automate the creation of the EMR cluster, orders data processing and termination of the cluster through AWS Step functions.
+
+From the EMR console, go to the cluster that was used for processing the orders data in the previous section and copy the "AWS CLI Export" section.
+This is the command actually used to create the EMR cluster based on the configuration we had provided and this command will be useful for the StateMachine task that will be used to create the EMR cluster.
+
+aws emr create-cluster --auto-scaling-role EMR_AutoScaling_DefaultRole 
+--applications Name=Hadoop Name=Spark 
+--bootstrap-actions '[{"Path":"s3://vinod-emr-project/bootstrap/boto3_install.sh","Name":"Custom action"}]' 
+--ebs-root-volume-size 10 
+--ec2-attributes '{"KeyName":"MyNewAWSKeyPair","InstanceProfile":"EMR_EC2_DefaultRole","SubnetId":"subnet-02089c503f1724835","EmrManagedSlaveSecurityGroup":"sg-                   0ea777ed434e66013","EmrManagedMasterSecurityGroup":"sg-0e2a7151fab3d3013"
+                  }' 
+--service-role EMR_DefaultRole 
+--release-label emr-6.3.0 
+--log-uri 's3n://aws-logs-100163808729-us-east-1/elasticmapreduce/' 
+--name 'ecommerce-emr-cluster' 
+--instance-groups '[{"InstanceCount":2,"InstanceGroupType":"CORE","InstanceType":"c3.xlarge","Name":"Core - 2"},                    {"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"c3.xlarge","Name":"Master - 1"}]' 
+--configurations '[{"Classification":"spark-hive-site","Properties":{"hive.metastore.client.factory.class":"com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory"}}]' 
+--scale-down-behavior TERMINATE_AT_TASK_COMPLETION 
+--region us-east-1
+
+
+****************************** EMR Create Cluster task in State Machine **************************************
+
+Based on the create-cluster command above, for the EMR Create cluster task in the State Machine, below API was used:
+Make sure the IAM role associated with the State Machine has required EMR related access.
+I added:
+AmazonElasticMapReduceRole
+AmazonElasticMapReduceforEC2Role
+AmazonElasticMapReduceforAutoScalingRole
+AmazonEMRFullAccessPolicy_v2 (This is for the next task - Add Step. elasticmapreduce:AddJobFlowSteps policy is needed for this task)
+
+{
+  "Name": "ecommerce-emr-cluster",
+  "ServiceRole": "EMR_DefaultRole",
+  "JobFlowRole": "EMR_EC2_DefaultRole",
+  "ReleaseLabel": "emr-6.3.0",
+  "BootstrapActions": [
+    {
+      "Name": "CustomBootStrapAction",
+      "ScriptBootstrapAction": {
+        "Path": "s3://vinod-emr-project/bootstrap/boto3_install.sh",
+        "Args": []
+      }
+    }
+  ],
+  "Applications": [
+    {
+      "Name": "Hadoop"
+    },
+    {
+      "Name": "Spark"
+    }
+  ],
+  "LogUri": "s3n://aws-logs-100163808729-us-east-1/elasticmapreduce/",
+  "VisibleToAllUsers": true,
+  "Instances": {
+    "KeepJobFlowAliveWhenNoSteps": true,
+    "InstanceFleets": [
+      {
+        "InstanceFleetType": "MASTER",
+        "Name": "ecommerce-master",
+        "TargetOnDemandCapacity": 1,
+        "InstanceTypeConfigs": [
+          {
+            "InstanceType": "c3.xlarge"
+          }
+        ]
+      },
+      {
+        "InstanceFleetType": "CORE",
+        "Name": "ecommerce-core",
+        "TargetOnDemandCapacity": 2,
+        "InstanceTypeConfigs": [
+          {
+            "InstanceType": "c3.xlarge"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+Check the option: Wait for task to complete
+If you dont check this, the task will be marked complete as soon as it starts.
+
+
+************************************* EMR Add Step task in State Machine *************************************
+
+Based on the final spark-submit command in 6. EMR.txt (cluster mode and code in S3), below API was created for the Add Step task in the State Machine.
+
+{
+  "ClusterId.$": "$.ClusterId",
+  "Step": {
+    "Name": "OrdersDataProcessingStep",
+    "HadoopJarStep": {
+      "Jar": "command-runner.jar",
+      "Args": [
+        "spark-submit",
+        "--deploy-mode",
+        "cluster",
+        "--conf",
+        "spark.yarn.appMasterEnv.appName=ecommerce-orders-processing",
+        "--conf",
+        "spark.yarn.appMasterEnv.src_file_format=csv",
+        "--conf",
+        "spark.yarn.appMasterEnv.src_file_dir=s3://vinod-ecommerce-data-from-rds/dev/orders/",
+        "--conf",
+        "spark.yarn.appMasterEnv.tgt_file_format=parquet",
+        "--conf",
+        "spark.yarn.appMasterEnv.tgt_file_dir=s3://vinod-ecommerce-data-transformed/orders/",
+        "--conf",
+        "spark.yarn.appMasterEnv.order_purchase_yr=2000",
+        "--py-files",
+        "s3://vinod-ecommerce-data-from-rds/code/ecommerce-util.zip",
+        "s3://vinod-ecommerce-data-from-rds/code/app.py"
+      ]
+    }
+  }
+}
+
+Check the option: Wait for task to complete
+If you dont check this, the task will be marked complete as soon as it starts.
+
+Also, check the option "Add original input to output using ResultPath"
+This is because we need the ClusterId for the next step.
+Since we are really not doing anything with the output of the Add Step task, we can choose to "Discard result and keep original input" alone.
+
+
+************************************* EMR Terminate Cluster task in State Machine *************************************
+
+{
+  "ClusterId.$": "$.ClusterId"
+}
+
+Check the option: Wait for task to complete
+If you dont check this, the task will be marked complete as soon as it starts.
+
+
+************************************* Invoke lambda function in State Machine *************************************
+
+We invoke a lambda function that will start the glue crawler on the transformed layer, start the glue job that processes transformed data into redshift and make audoit entries into dynamodb for the transformed layer files. In the Step function "Invoke lambda" task, specify the lambda function that you want to invoke and since our lambda does not need any input, we can select the "No Payload" option under Payload.
+
